@@ -173,10 +173,16 @@ class CorrectedJetsFactory(object):
         # allowing user inputs to override or augment the inferred mapping.
         if name_map is None:
             name_map = {}
+        user_name_map = dict(name_map)
         if self.tool == "clib":
             stack_map = dict(jec_stack.blank_name_map)
-            stack_map.update(name_map)
+            stack_map.update(user_name_map)
             name_map = stack_map
+
+            # Allow raw pt/mass inference if the caller didn't supply explicit mappings.
+            for raw_key in ("ptRaw", "massRaw"):
+                if raw_key not in user_name_map:
+                    name_map.pop(raw_key, None)
 
         # Handle name map for raw pt and mass
         if "ptRaw" not in name_map or name_map["ptRaw"] is None:
