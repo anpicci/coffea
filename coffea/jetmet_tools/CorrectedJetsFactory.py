@@ -207,10 +207,13 @@ class CorrectedJetsFactory(object):
             name_map["massRaw"] = name_map["JetMass"] + "_raw"
 
         # Only treat pt/mass as already-raw when the user explicitly indicated so
-        self.treat_pt_as_raw = provided_name_map.get("ptRaw") in (
-            None,
-            provided_name_map.get("JetPt"),
-        ) if "ptRaw" in provided_name_map else False
+        # by mapping ptRaw to the corrected pt field. Missing raw mappings should
+        # fall back to inference rather than clobbering existing raw inputs.
+        self.treat_pt_as_raw = (
+            provided_name_map.get("ptRaw") == provided_name_map.get("JetPt")
+            if "ptRaw" in provided_name_map
+            else False
+        )
 
         self.jec_stack = jec_stack
         self.name_map = name_map
