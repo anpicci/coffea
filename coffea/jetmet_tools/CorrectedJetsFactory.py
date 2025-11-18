@@ -188,20 +188,29 @@ class CorrectedJetsFactory(object):
             name_map = provided_name_map
 
         # Handle name map for raw pt and mass
-        self.treat_pt_as_raw = "ptRaw" not in name_map or name_map["ptRaw"] is None
-        if self.treat_pt_as_raw:
+        pt_raw_missing = "ptRaw" not in name_map or name_map["ptRaw"] is None
+        if pt_raw_missing:
             warnings.warn(
                 "There is no name mapping for ptRaw,"
-                " CorrectedJets will assume that <object>.pt is raw pt!"
+                " CorrectedJets will fall back to <object>.pt_raw"
+                " as the raw pt field."
             )
             name_map["ptRaw"] = name_map["JetPt"] + "_raw"
 
-        if "massRaw" not in name_map or name_map["massRaw"] is None:
+        mass_raw_missing = "massRaw" not in name_map or name_map["massRaw"] is None
+        if mass_raw_missing:
             warnings.warn(
                 "There is no name mapping for massRaw,"
-                " CorrectedJets will assume that <object>.mass is raw mass!"
+                " CorrectedJets will fall back to <object>.mass_raw"
+                " as the raw mass field."
             )
             name_map["massRaw"] = name_map["JetMass"] + "_raw"
+
+        # Only treat pt/mass as already-raw when the user explicitly indicated so
+        self.treat_pt_as_raw = provided_name_map.get("ptRaw") in (
+            None,
+            provided_name_map.get("JetPt"),
+        ) if "ptRaw" in provided_name_map else False
 
         self.jec_stack = jec_stack
         self.name_map = name_map
