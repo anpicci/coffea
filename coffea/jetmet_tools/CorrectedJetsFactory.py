@@ -169,6 +169,15 @@ class CorrectedJetsFactory(object):
         self.tool = "clib" if jec_stack.use_clib else "jecstack"
         self.forceStochastic = False
 
+        # Start from the stack-provided defaults when using correctionlib,
+        # allowing user inputs to override or augment the inferred mapping.
+        if name_map is None:
+            name_map = {}
+        if self.tool == "clib":
+            stack_map = dict(jec_stack.blank_name_map)
+            stack_map.update(name_map)
+            name_map = stack_map
+
         # Handle name map for raw pt and mass
         if "ptRaw" not in name_map or name_map["ptRaw"] is None:
             warnings.warn(
