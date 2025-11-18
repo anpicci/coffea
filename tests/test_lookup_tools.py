@@ -11,6 +11,51 @@ from coffea.nanoevents import NanoEventsFactory
 
 from dummy_distributions import dummy_jagged_eta_pt
 
+
+class _DummyCorrection:
+    def __init__(self, name, inputs, metadata=None, evaluate_fn=None):
+        self.name = name
+        self.inputs = [SimpleNamespace(name=inp) for inp in inputs]
+        self._base = SimpleNamespace(inputs=self.inputs)
+        self.metadata = metadata or {}
+        self._evaluate_fn = evaluate_fn
+        self.calls = []
+
+    def evaluate(self, *args, **kwargs):
+        if self._evaluate_fn is not None:
+            result = self._evaluate_fn(*args, **kwargs)
+        else:
+            result = {"args": args, "kwargs": kwargs}
+        self.calls.append({"args": args, "kwargs": kwargs, "result": result})
+        return result
+
+
+@pytest.fixture
+def legacy_jec_correction():
+    def _evaluate(*args, **kwargs):
+        return args, kwargs
+
+    return _DummyCorrection(
+        name="LegacyJEC",
+        inputs=("JetPt", "JetEta"),
+        metadata={"type": "scale_factor"},
+        evaluate_fn=_evaluate,
+    )
+
+
+@pytest.fixture
+def correctionlib_jec_stack():
+    def _evaluate(**kwargs):
+        ordered_keys = ("JetPt", "JetEta", "Rho", "systematic")
+        return tuple(kwargs.get(key) for key in ordered_keys)
+
+    return _DummyCorrection(
+        name="MyCorrectionJECStack",
+        inputs=("JetPt", "JetEta", "Rho", "systematic"),
+        metadata={"type": "jec", "jec_stack": True},
+        evaluate_fn=_evaluate,
+    )
+
 # From make_expected_lookup.py
 _testSF2d_expected_output = np.array(
     [
@@ -201,6 +246,57 @@ def test_correctionlib_wrapper_jec_stack_detection():
     assert corr.called_with == {"JetPt": jet_pt, "systematic": "nom"}
     assert out_pt == jet_pt
     assert out_sys == "nom"
+
+
+def test_correctionlib_wrapper_legacy_signature(legacy_jec_correction):
+    wrapper = lookup_tools.correctionlib_wrapper(legacy_jec_correction)
+
+    jet_pt = 75.0
+    jet_eta = 1.25
+
+    result_args, result_kwargs = wrapper(jet_pt, jet_eta, flavor="b")
+
+    assert not wrapper._is_jec_stack
+    assert legacy_jec_correction.calls[-1]["args"] == (jet_pt, jet_eta)
+    assert legacy_jec_correction.calls[-1]["kwargs"] == {"flavor": "b"}
+    assert result_args == (jet_pt, jet_eta)
+    assert result_kwargs == {"flavor": "b"}
+    assert "LegacyJEC(JetPt,JetEta)" in repr(wrapper)
+
+
+def test_correctionlib_wrapper_jec_stack_evaluation_paths(correctionlib_jec_stack):
+    wrapper = lookup_tools.correctionlib_wrapper(correctionlib_jec_stack)
+
+    jet_pt = 120.0
+    jet_eta = -0.4
+    rho = 18.5
+
+    positional_out = wrapper(jet_pt, jet_eta, rho)
+    dict_out = wrapper({"JetPt": jet_pt, "JetEta": jet_eta, "Rho": rho})
+    override_out = wrapper(jet_pt, jet_eta, rho, systematic="up")
+
+    assert positional_out == (jet_pt, jet_eta, rho, "nom")
+    assert dict_out == (jet_pt, jet_eta, rho, "nom")
+    assert override_out == (jet_pt, jet_eta, rho, "up")
+
+    assert correctionlib_jec_stack.calls[0]["kwargs"] == {
+        "JetPt": jet_pt,
+        "JetEta": jet_eta,
+        "Rho": rho,
+        "systematic": "nom",
+    }
+    assert correctionlib_jec_stack.calls[1]["kwargs"] == {
+        "JetPt": jet_pt,
+        "JetEta": jet_eta,
+        "Rho": rho,
+        "systematic": "nom",
+    }
+    assert correctionlib_jec_stack.calls[2]["kwargs"] == {
+        "JetPt": jet_pt,
+        "JetEta": jet_eta,
+        "Rho": rho,
+        "systematic": "up",
+    }
 
 
 def test_root_scalefactors():
