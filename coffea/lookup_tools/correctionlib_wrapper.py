@@ -18,10 +18,10 @@ class correctionlib_wrapper(lookup_base):
 
         return "jec" in meta_markers or meta.get("jec_stack", False) or "jecstack" in name.lower()
 
-    def _evaluate(self, *args):
+    def _evaluate(self, *args, **kwargs):
         if self._is_jec_stack:
-            return self._evaluate_jec_stack(*args)
-        return self._corr.evaluate(*args)
+            return self._evaluate_jec_stack(*args, **kwargs)
+        return self._corr.evaluate(*args, **kwargs)
 
     def _evaluate_jec_stack(self, *args, **kwargs):
         """Use a specialized evaluation path for JEC stack payloads.
