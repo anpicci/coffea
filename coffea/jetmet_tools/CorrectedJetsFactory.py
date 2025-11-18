@@ -210,9 +210,9 @@ class CorrectedJetsFactory(object):
         # by mapping ptRaw to the corrected pt field. Missing raw mappings should
         # fall back to inference rather than clobbering existing raw inputs.
         self.treat_pt_as_raw = (
-            provided_name_map.get("ptRaw") == provided_name_map.get("JetPt")
-            if "ptRaw" in provided_name_map
-            else False
+            "ptRaw" in provided_name_map
+            and provided_name_map.get("ptRaw") is not None
+            and provided_name_map.get("ptRaw") == provided_name_map.get("JetPt")
         )
 
         self.jec_stack = jec_stack
