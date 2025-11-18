@@ -181,10 +181,7 @@ class CorrectedJetsFactory(object):
             # a non-default mapping. Passing through the stack defaults alone
             # should not pre-populate raw keys and block fallback inference.
             for raw_key in ("ptRaw", "massRaw"):
-                if (
-                    raw_key not in provided_name_map
-                    or provided_name_map.get(raw_key) == stack_map.get(raw_key)
-                ):
+                if raw_key not in provided_name_map:
                     name_map.pop(raw_key, None)
         else:
             name_map = provided_name_map
