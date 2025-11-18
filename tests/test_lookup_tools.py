@@ -1,6 +1,8 @@
 from __future__ import print_function, division
 
 import os
+from types import SimpleNamespace
+
 from coffea import lookup_tools
 import awkward as ak
 import pytest
@@ -176,6 +178,29 @@ def test_correctionlib():
         "Diff over threshold rate: %.1f %%" % (100 * (diff >= 1.0e-8).sum() / diff.size)
     )
     assert (diff < 1.0e-8).all()
+
+
+def test_correctionlib_wrapper_jec_stack_detection():
+    class DummyCorrection:
+        def __init__(self):
+            self.metadata = {"type": "jec", "jec_stack": True}
+            self.inputs = [SimpleNamespace(name="JetPt"), SimpleNamespace(name="systematic")]
+            self.name = "MyJECStack"
+            self.called_with = None
+
+        def evaluate(self, **kwargs):
+            self.called_with = kwargs
+            return kwargs.get("JetPt", None), kwargs.get("systematic", None)
+
+    corr = DummyCorrection()
+    wrapper = lookup_tools.correctionlib_wrapper(corr)
+
+    jet_pt = 50.0
+    out_pt, out_sys = wrapper(jet_pt)
+
+    assert corr.called_with == {"JetPt": jet_pt, "systematic": "nom"}
+    assert out_pt == jet_pt
+    assert out_sys == "nom"
 
 
 def test_root_scalefactors():
