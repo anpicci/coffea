@@ -108,18 +108,49 @@ def get_corr_inputs(jets, corr_obj, name_map, cache=None, corrections=None):
     given a dictionary and a correction object.
     """
 
+    def _maybe_from_metadata(inp):
+        """Derive input values based on optional metadata hints without changing the public API."""
+
+        meta = getattr(inp, "metadata", None) or {}
+
+        use_raw = meta.get("isRawPt", False) or meta.get("useRawPt", False)
+        use_corr = meta.get("isCorrectedPt", False) or meta.get("useCorrectedPt", False)
+
+        if use_raw:
+            raw_field = name_map.get("ptRaw", name_map.get(inp.name, inp.name))
+            return awkward.flatten(jets[raw_field])
+
+        if corrections is not None and use_corr:
+            rawvar = awkward.flatten(jets[name_map[inp.name]])
+            init_input_value = partial(rawvar_jec, rawvar=rawvar, lazy_cache=cache)
+            return init_input_value(jecval=corrections)
+
+        return None
+
     if corrections is None:
-        input_values = [
-            awkward.flatten(jets[name_map[inp.name]])
-            for inp in corr_obj.inputs
-            if (inp.name != "systematic")
-        ]
+        input_values = []
+        for inp in corr_obj.inputs:
+            if inp.name == "systematic":
+                continue
+
+            from_meta = _maybe_from_metadata(inp)
+            if from_meta is not None:
+                input_values.append(from_meta)
+                continue
+
+            input_values.append(awkward.flatten(jets[name_map[inp.name]]))
     else:
         ## This is needed to propagate the previous level of corrections, before applying the next one
         input_values = []
         for inp in corr_obj.inputs:
             if inp.name == "systematic":
                 continue
+
+            from_meta = _maybe_from_metadata(inp)
+            if from_meta is not None:
+                input_values.append(from_meta)
+                continue
+
             elif inp.name == "JetPt":
                 rawvar = awkward.flatten(jets[name_map[inp.name]])
                 init_input_value = partial(rawvar_jec, rawvar=rawvar, lazy_cache=cache)
