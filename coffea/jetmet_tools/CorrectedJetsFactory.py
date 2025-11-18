@@ -172,6 +172,7 @@ class CorrectedJetsFactory(object):
         # Start from the stack-provided defaults when using correctionlib,
         # allowing user inputs to override or augment the inferred mapping.
         provided_name_map = {} if name_map is None else dict(name_map)
+        user_raw_keys = {k for k in ("ptRaw", "massRaw") if k in provided_name_map}
         if self.tool == "clib":
             stack_map = dict(jec_stack.blank_name_map)
             name_map = dict(stack_map)
@@ -181,7 +182,7 @@ class CorrectedJetsFactory(object):
             # a non-default mapping. Passing through the stack defaults alone
             # should not pre-populate raw keys and block fallback inference.
             for raw_key in ("ptRaw", "massRaw"):
-                if raw_key not in provided_name_map:
+                if raw_key not in user_raw_keys:
                     name_map.pop(raw_key, None)
         else:
             name_map = provided_name_map
