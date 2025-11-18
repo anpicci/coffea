@@ -169,21 +169,51 @@ class CorrectedJetsFactory(object):
         self.tool = "clib" if jec_stack.use_clib else "jecstack"
         self.forceStochastic = False
 
+        # Start from the stack-provided defaults when using correctionlib,
+        # allowing user inputs to override or augment the inferred mapping.
+        provided_name_map = {} if name_map is None else dict(name_map)
+        user_raw_keys = {k for k in ("ptRaw", "massRaw") if k in provided_name_map}
+        if self.tool == "clib":
+            stack_map = dict(jec_stack.blank_name_map)
+            name_map = dict(stack_map)
+            name_map.update(provided_name_map)
+
+            # Allow raw pt/mass inference unless the caller explicitly supplied
+            # a non-default mapping. Passing through the stack defaults alone
+            # should not pre-populate raw keys and block fallback inference.
+            for raw_key in ("ptRaw", "massRaw"):
+                if raw_key not in user_raw_keys:
+                    name_map.pop(raw_key, None)
+        else:
+            name_map = provided_name_map
+
         # Handle name map for raw pt and mass
-        if "ptRaw" not in name_map or name_map["ptRaw"] is None:
+        pt_raw_missing = "ptRaw" not in name_map or name_map["ptRaw"] is None
+        if pt_raw_missing:
             warnings.warn(
                 "There is no name mapping for ptRaw,"
-                " CorrectedJets will assume that <object>.pt is raw pt!"
+                " CorrectedJets will fall back to <object>.pt_raw"
+                " as the raw pt field."
             )
             name_map["ptRaw"] = name_map["JetPt"] + "_raw"
-        self.treat_pt_as_raw = "ptRaw" not in name_map
 
-        if "massRaw" not in name_map or name_map["massRaw"] is None:
+        mass_raw_missing = "massRaw" not in name_map or name_map["massRaw"] is None
+        if mass_raw_missing:
             warnings.warn(
                 "There is no name mapping for massRaw,"
-                " CorrectedJets will assume that <object>.mass is raw mass!"
+                " CorrectedJets will fall back to <object>.mass_raw"
+                " as the raw mass field."
             )
             name_map["massRaw"] = name_map["JetMass"] + "_raw"
+
+        # Only treat pt/mass as already-raw when the user explicitly indicated so
+        # by mapping ptRaw to the corrected pt field. Missing raw mappings should
+        # fall back to inference rather than clobbering existing raw inputs.
+        self.treat_pt_as_raw = (
+            "ptRaw" in provided_name_map
+            and provided_name_map.get("ptRaw") is not None
+            and provided_name_map.get("ptRaw") == provided_name_map.get("JetPt")
+        )
 
         self.jec_stack = jec_stack
         self.name_map = name_map

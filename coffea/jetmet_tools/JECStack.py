@@ -83,6 +83,13 @@ class JECStack:
         # Store corrections directly in the JECStack for easy access
         self.corrections = {name: self.cset[name] for name in requested_corrections}
 
+        # Collect the full set of input variables used by any correction
+        self.correction_inputs = set()
+        for corr in self.corrections.values():
+            self.correction_inputs.update(
+                inp.name for inp in corr.inputs if inp.name != "systematic"
+            )
+
     def _initialize_jecstack(self):
         """Initialize the JECStack tools for the non-clib scenario."""
         assembled = self.assemble_corrections()
@@ -142,16 +149,16 @@ class JECStack:
             "UnClusteredEnergyDeltaX",
             "UnClusteredEnergyDeltaY",
         }
+        if self.use_clib:
+            out.update(getattr(self, "correction_inputs", set()))
+            return {name: name for name in out}
+
         if self.jec is not None:
-            for name in self.jec.signature:
-                out.add(name)
+            out.update(self.jec.signature)
         if self.junc is not None:
-            for name in self.junc.signature:
-                out.add(name)
+            out.update(self.junc.signature)
         if self.jer is not None:
-            for name in self.jer.signature:
-                out.add(name)
+            out.update(self.jer.signature)
         if self.jersf is not None:
-            for name in self.jersf.signature:
-                out.add(name)
+            out.update(self.jersf.signature)
         return {name: None for name in out}
