@@ -1,12 +1,15 @@
 import os
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, MutableMapping, Optional, Union
 from coffea.jetmet_tools.FactorizedJetCorrector import FactorizedJetCorrector, _levelre
 from coffea.jetmet_tools.JetResolution import JetResolution
 from coffea.jetmet_tools.JetResolutionScaleFactor import JetResolutionScaleFactor
 from coffea.jetmet_tools.JetCorrectionUncertainty import JetCorrectionUncertainty
 import correctionlib as clib
+
+
+_GLOBAL_JECSTACK_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 @dataclass
@@ -44,6 +47,9 @@ class JECStack:
     ] = None
     resolved_json_path: Optional[str] = None
     savecorr: bool = False
+    cache: Optional[MutableMapping[str, Dict[str, Any]]] = None
+    enable_cache: bool = False
+    cache_identifier: Optional[str] = None
 
     # Fields for the usejecstack scenario (useclib=False)
     jec: Optional[FactorizedJetCorrector] = None
@@ -53,6 +59,7 @@ class JECStack:
 
     def __post_init__(self):
         """Handle initialization based on use_clib flag."""
+        self._cache_key: Optional[str] = self.cache_identifier
         if self.use_clib:
             self._initialize_clib()
         else:
@@ -97,8 +104,23 @@ class JECStack:
                 f"\n\nRequested corrections are: {requested_corrections}"
             )
 
-        # Store corrections directly in the JECStack for easy access
-        self.corrections = {name: self.cset[name] for name in requested_corrections}
+        # Store corrections directly in the JECStack for easy access, reusing any
+        # cached handles to avoid repeated construction work.
+        cache_entry = self._get_cache_entry()
+        cached_corrections = None
+        if cache_entry is not None:
+            cached_corrections = cache_entry.setdefault("corrections", {})
+
+        self.corrections = {}
+        for name in requested_corrections:
+            if cached_corrections is not None and name in cached_corrections:
+                self.corrections[name] = cached_corrections[name]
+                continue
+
+            corr = self.cset[name]
+            self.corrections[name] = corr
+            if cached_corrections is not None:
+                cached_corrections[name] = corr
 
         # Collect the full set of input variables used by any correction
         self.correction_inputs = set()
@@ -138,7 +160,9 @@ class JECStack:
         """Resolve the correction set or path for clib initialization."""
 
         if self.correction_set is not None:
-            return self._ensure_highlevel_cset(self.correction_set), None
+            cset = self._ensure_highlevel_cset(self.correction_set)
+            self._maybe_store_cset_in_cache(cset)
+            return cset, None
 
         source = None
         if self.json_path is not None:
@@ -159,15 +183,36 @@ class JECStack:
                 )
 
         if isinstance(source, (clib.CorrectionSet, clib.schemav2.CorrectionSet)):
-            return self._ensure_highlevel_cset(source), None
+            cset = self._ensure_highlevel_cset(source)
+            self._maybe_store_cset_in_cache(cset)
+            return cset, None
 
         if isinstance(source, (str, PathLike)):
-            resolved_path = os.fspath(source)
-            return clib.CorrectionSet.from_file(resolved_path), resolved_path
+            resolved_path = os.path.abspath(os.fspath(source))
+            cache_key = self.cache_identifier or resolved_path
+            cset = self._load_cset_from_path(resolved_path, cache_key)
+            self._cache_key = cache_key
+            return cset, resolved_path
 
         raise ValueError(
             "A json_path, correction_set, or resolver is required for clib initialization."
         )
+
+    def _maybe_store_cset_in_cache(self, cset: clib.CorrectionSet) -> None:
+        cache_entry = self._get_cache_entry(force_key=self.cache_identifier)
+        if cache_entry is not None and "cset" not in cache_entry:
+            cache_entry["cset"] = cset
+
+    def _load_cset_from_path(self, resolved_path: str, cache_key: Optional[str]):
+        cache_entry = self._get_cache_entry(force_key=cache_key)
+        if cache_entry is not None and "cset" in cache_entry:
+            return cache_entry["cset"]
+
+        cset = clib.CorrectionSet.from_file(resolved_path)
+        cache_entry = self._get_cache_entry(force_key=cache_key)
+        if cache_entry is not None:
+            cache_entry["cset"] = cset
+        return cset
 
     def _ensure_highlevel_cset(
         self, cset: Union[clib.CorrectionSet, clib.schemav2.CorrectionSet]
@@ -181,6 +226,22 @@ class JECStack:
             return clib.CorrectionSet.from_string(cset.json())
 
         raise TypeError("Unsupported correction set type for conversion")
+
+    def _get_cache_mapping(self) -> Optional[MutableMapping[str, Dict[str, Any]]]:
+        if self.cache is not None:
+            return self.cache
+        if self.enable_cache:
+            return _GLOBAL_JECSTACK_CACHE
+        return None
+
+    def _get_cache_entry(
+        self, force_key: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        cache_map = self._get_cache_mapping()
+        key = force_key or self._cache_key
+        if cache_map is None or key is None:
+            return None
+        return cache_map.setdefault(key, {})
 
     def assemble_corrections(self):
         """Assemble corrections for both scenarios."""
