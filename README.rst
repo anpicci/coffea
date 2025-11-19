@@ -175,3 +175,13 @@ as before.
 Documentation
 =============
 All documentation is hosted at https://coffea-hep.readthedocs.io/en/backports-v0.7.x/
+
+Test data and optional dependencies
+===================================
+
+The pytest suite runs without any network access. Plotting regression tests
+now generate deterministic pseudo-data on the fly, so no external files or
+network downloads are required. Developers who wish to exercise tests that
+depend on alternate data sources can add their own fixtures under
+``tests/samples`` and gate them behind ``pytest`` skips that are explicitly
+enabled via environment variables.

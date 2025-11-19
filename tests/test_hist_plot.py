@@ -3,59 +3,94 @@ from __future__ import print_function, division
 
 import pytest
 
-from coffea.util import numpy as np
-import requests
-import os
+np = pytest.importorskip("numpy")
 
-url = (
-    "https://github.com/scikit-hep/uproot3/blob/master/tests/samples/HZZ.root?raw=true"
-)
-r = requests.get(url)
-with open(os.path.join(os.getcwd(), "HZZ.root"), "wb") as f:
-    f.write(r.content)
+
+import importlib.machinery
+
+if not hasattr(importlib.machinery.FileFinder, "find_module"):
+    def _filefinder_find_module(self, fullname):
+        spec = self.find_spec(fullname)
+        return spec.loader if spec else None
+
+    importlib.machinery.FileFinder.find_module = _filefinder_find_module
+
+
+import sys
+import types
+from packaging.version import Version
+
+if "distutils.version" not in sys.modules:
+    distutils_mod = types.ModuleType("distutils")
+    version_mod = types.ModuleType("distutils.version")
+
+    class _LooseVersion:
+        def __init__(self, version):
+            self.vstring = str(version)
+            self._version = Version(self.vstring)
+
+        def _coerce(self, other):
+            if isinstance(other, _LooseVersion):
+                return other
+            return _LooseVersion(other)
+
+        def _cmp(self, other, op):
+            other = self._coerce(other)
+            return op(self._version, other._version)
+
+        def __lt__(self, other):
+            return self._cmp(other, lambda a, b: a < b)
+
+        def __le__(self, other):
+            return self._cmp(other, lambda a, b: a <= b)
+
+        def __eq__(self, other):
+            return self._cmp(other, lambda a, b: a == b)
+
+        def __ne__(self, other):
+            return self._cmp(other, lambda a, b: a != b)
+
+        def __gt__(self, other):
+            return self._cmp(other, lambda a, b: a > b)
+
+        def __ge__(self, other):
+            return self._cmp(other, lambda a, b: a >= b)
+
+        def __repr__(self):
+            return f"LooseVersion({self.vstring!r})"
+
+        def __str__(self):
+            return self.vstring
+
+    version_mod.LooseVersion = _LooseVersion
+    version_mod.StrictVersion = _LooseVersion
+    distutils_mod.version = version_mod
+    sys.modules["distutils"] = distutils_mod
+    sys.modules["distutils.version"] = version_mod
 
 
 def fill_lepton_kinematics():
-    import uproot
-    import awkward as ak
-    from coffea.nanoevents.methods import candidate
-
-    ak.behavior.update(candidate.behavior)
-
-    # histogram creation and manipulation
     from coffea import hist
 
-    fin = uproot.open("HZZ.root")
-    tree = fin["events"]
+    rng = np.random.default_rng(20240710)
 
-    arrays = {
-        k.replace("Electron_", "").strip("P").replace("E", "t").lower(): v
-        for k, v in tree.arrays(filter_name="Electron_*", how=dict).items()
-    }
-    electrons = ak.zip(arrays, with_name="Candidate")
+    n_electrons = 1800
+    electron_pt = rng.uniform(12.0, 95.0, size=n_electrons)
+    electron_eta = rng.uniform(-2.4, 2.4, size=n_electrons)
 
-    arrays = {
-        k.replace("Muon_", "").strip("P").replace("E", "t").lower(): v
-        for k, v in tree.arrays(filter_name="Muon_*", how=dict).items()
-    }
-    muons = ak.zip(arrays, with_name="Candidate")
+    n_muons = 1500
+    muon_pt = rng.normal(loc=55.0, scale=20.0, size=n_muons)
+    muon_eta = rng.normal(loc=0.0, scale=1.2, size=n_muons)
 
-    # Two types of axes exist presently: bins and categories
     lepton_kinematics = hist.Hist(
         "Events",
         hist.Cat("flavor", "Lepton flavor"),
         hist.Bin("pt", "$p_{T}$", 19, 10, 100),
-        hist.Bin("eta", r"$\eta$", [-2.5, -1.4, 0, 1.4, 2.5]),
+        hist.Bin("eta", r"$\\eta$", [-2.5, -1.4, 0, 1.4, 2.5]),
     )
 
-    # Pass keyword arguments to fill, all arrays must be flat numpy arrays
-    # User is responsible for ensuring all arrays have same jagged structure!
-    lepton_kinematics.fill(
-        flavor="electron", pt=ak.flatten(electrons.pt), eta=ak.flatten(electrons.eta)
-    )
-    lepton_kinematics.fill(
-        flavor="muon", pt=ak.flatten(muons.pt), eta=ak.flatten(muons.eta)
-    )
+    lepton_kinematics.fill(flavor="electron", pt=electron_pt, eta=electron_eta)
+    lepton_kinematics.fill(flavor="muon", pt=muon_pt, eta=muon_eta)
 
     return lepton_kinematics
 
@@ -126,7 +161,8 @@ def test_plotratio():
     pthist = lepton_kinematics.sum("eta")
     bin_values = pthist.axis("pt").centers()
     poisson_means = pthist.sum("flavor").values()[()]
-    values = np.repeat(bin_values, np.random.poisson(poisson_means))
+    rng = np.random.default_rng(91011)
+    values = np.repeat(bin_values, rng.poisson(poisson_means))
     pthist.fill(flavor="pseudodata", pt=values)
 
     # Set nicer labels, by accessing the string bins' label property
