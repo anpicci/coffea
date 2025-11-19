@@ -50,7 +50,6 @@ class JECStack:
         ]
     ] = None
     resolved_json_path: Optional[str] = None
-    savecorr: bool = False
     cache: Optional[MutableMapping[str, Dict[str, Any]]] = None
     enable_cache: bool = False
     cache_identifier: Optional[str] = None
@@ -165,7 +164,7 @@ class JECStack:
             self.jec_names_clib
             + self.jer_names_clib
             + self.jec_uncsources_clib
-            + [self.resolved_json_path or self.json_path, self.savecorr]
+            + [self.resolved_json_path or self.json_path]
         )
 
     def _resolve_cset(self):

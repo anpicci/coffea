@@ -1,14 +1,12 @@
 import awkward
 import numpy
 import warnings
-from functools import partial, reduce
+from functools import partial
 import operator
 from coffea.jetmet_tools import JECStack
 
 _stack_parts = ["jec", "junc", "jer", "jersf"]
 _MIN_JET_ENERGY = numpy.array(1e-2, dtype=numpy.float32)
-_ONE_F32 = numpy.array(1.0, dtype=numpy.float32)
-_ZERO_F32 = numpy.array(0.0, dtype=numpy.float32)
 _JERSF_FORM = {
     "class": "NumpyArray",
     "inner_shape": [3],
@@ -254,18 +252,7 @@ class CorrectedJetsFactory(object):
                 + " Please supply mappings for these variables!"
             )
 
-    def build(self, jets, lazy_cache):
-        if lazy_cache is None:
-            raise Exception(
-                "CorrectedJetsFactory requires an awkward-array cache to function correctly."
-            )
-        mapping_proxy = getattr(awkward._util, "MappingProxy", None)
-        if mapping_proxy is not None:
-            lazy_cache = mapping_proxy.maybe_wrap(lazy_cache)
-        if not isinstance(jets, awkward.highlevel.Array):
-            raise Exception("'jets' must be an awkward > 1.0.0 array of some kind!")
-
-        # THESE ARE THE ATTRIBUTES OF THE JET COLLECTION
+    def _prepare_jets(self, jets):
         fields = awkward.fields(jets)
         if len(fields) == 0:
             raise Exception(
@@ -282,104 +269,168 @@ class CorrectedJetsFactory(object):
                 behavior=getattr(jets, "behavior", None),
                 parameters=getattr(getattr(jets, "layout", None), "parameters", None),
             )
+
         wrap = partial(awkward_rewrap, like_what=jets, gfunc=rewrap_recordarray)
         scalar_form = awkward.without_parameters(
             out[self.name_map["ptRaw"]]
         ).layout.form
 
         in_dict = {field: out[field] for field in fields}
-        # always forward the original (likely corrected) pt/mass
         in_dict[self.name_map["JetPt"] + "_orig"] = in_dict[self.name_map["JetPt"]]
         in_dict[self.name_map["JetMass"] + "_orig"] = in_dict[self.name_map["JetMass"]]
         out_dict = dict(in_dict)
 
-        # take care of nominal JEC (no JER if available)
         if self.treat_pt_as_raw:
             out_dict[self.name_map["ptRaw"]] = out_dict[self.name_map["JetPt"]]
             out_dict[self.name_map["massRaw"]] = out_dict[self.name_map["JetMass"]]
+
+        return out, wrap, scalar_form, in_dict, out_dict
+
+    def _resolve_level_limit(self, target_level):
+        if target_level is None:
+            return len(getattr(self.jec_stack, "jec_names_clib", []) or [])
+
+        available = {}
+        names = list(getattr(self.jec_stack, "jec_names_clib", []) or [])
+        short_names = list(getattr(self.jec_stack, "jec_levels", []) or [])
+        for idx, name in enumerate(names):
+            available[name] = idx + 1
+            if idx < len(short_names):
+                available[short_names[idx]] = idx + 1
+
+        if target_level not in available:
+            raise ValueError(
+                f"Unknown target_level '{target_level}'. Available levels are: "
+                + ", ".join(available.keys())
+            )
+
+        return available[target_level]
+
+    def _evaluate_correctionlib_correction(
+        self,
+        jets,
+        jec_name_map,
+        lazy_cache,
+        target_level,
+        out_dict,
+    ):
+        level_limit = self._resolve_level_limit(target_level)
+        if level_limit == 0:
+            return awkward.values_astype(
+                awkward.ones_like(out_dict[self.name_map["JetPt"]]), numpy.float32
+            )
+
+        cumulative = None
+        for idx, lvl in enumerate(self.jec_stack.jec_names_clib):
+            sf = self.corrections.get(lvl)
+            if sf is None:
+                raise ValueError(f"Correction {lvl} not found in self.corrections")
+
+            inputs = get_corr_inputs(
+                jets=jets,
+                corr_obj=sf,
+                name_map=jec_name_map,
+                cache=lazy_cache,
+                corrections=cumulative,
+            )
+            correction = sf.evaluate(*inputs).astype(dtype=numpy.float32)
+            if cumulative is None:
+                cumulative = correction
+            else:
+                cumulative = correction * cumulative
+
+            if idx + 1 == level_limit:
+                break
+
+        if cumulative is None:
+            cumulative = awkward.values_astype(
+                awkward.ones_like(out_dict[self.name_map["JetPt"]]), numpy.float32
+            )
+
+        return cumulative
+
+    def _evaluate_total_correction(
+        self,
+        jets,
+        out_dict,
+        jec_name_map,
+        lazy_cache,
+        scalar_form,
+        target_level,
+    ):
+        if self.tool == "jecstack":
+            if target_level is not None:
+                raise ValueError(
+                    "target_level selection is only supported for correctionlib-based inputs"
+                )
+
+            if self.jec_stack.jec is not None:
+                jec_args = {
+                    k: out_dict[jec_name_map[k]] for k in self.jec_stack.jec.signature
+                }
+                return self.jec_stack.jec.getCorrection(
+                    **jec_args, form=scalar_form, lazy_cache=lazy_cache
+                )
+
+            return awkward.ones_like(out_dict[self.name_map["JetPt"]])
+
+        if self.tool == "clib":
+            return self._evaluate_correctionlib_correction(
+                jets, jec_name_map, lazy_cache, target_level, out_dict
+            )
+
+        raise RuntimeError("Unsupported correction tool configuration")
+
+    def correction_factors(self, jets, lazy_cache, target_level=None):
+        if lazy_cache is None:
+            raise Exception(
+                "CorrectedJetsFactory requires an awkward-array cache to function correctly."
+            )
+        mapping_proxy = getattr(awkward._util, "MappingProxy", None)
+        if mapping_proxy is not None:
+            lazy_cache = mapping_proxy.maybe_wrap(lazy_cache)
+        if not isinstance(jets, awkward.highlevel.Array):
+            raise Exception("'jets' must be an awkward > 1.0.0 array of some kind!")
+
+        out, wrap, scalar_form, _, out_dict = self._prepare_jets(jets)
 
         jec_name_map = dict(self.name_map)
         jec_name_map["JetPt"] = jec_name_map["ptRaw"]
         jec_name_map["JetMass"] = jec_name_map["massRaw"]
 
-        # Apply JEC corrections based on scenario
-        total_correction = None
-        if self.tool == "jecstack":
-            if self.jec_stack.jec is not None:
-                jec_args = {
-                    k: out_dict[jec_name_map[k]] for k in self.jec_stack.jec.signature
-                }
-                total_correction = self.jec_stack.jec.getCorrection(
-                    **jec_args, form=scalar_form, lazy_cache=lazy_cache
-                )
-            else:
-                total_correction = awkward.ones_like(out_dict[self.name_map["JetPt"]])
+        total_correction = self._evaluate_total_correction(
+            jets, out_dict, jec_name_map, lazy_cache, scalar_form, target_level
+        )
 
-        elif self.tool == "clib":
-            corrections_list = []
+        correction_record = awkward.zip(
+            {"correction": awkward.Array(total_correction)},
+            depth_limit=1,
+            parameters=out.layout.parameters,
+            behavior=out.behavior,
+        )
 
-            for lvl in self.jec_stack.jec_names_clib:
-                cumCorr = None
-                if len(corrections_list) > 0:
-                    ones = numpy.ones_like(corrections_list[-1], dtype=numpy.float32)
-                    cumCorr = reduce(lambda x, y: y * x, corrections_list, ones).astype(
-                        dtype=numpy.float32
-                    )
+        return wrap(correction_record)["correction"]
 
-                sf = self.corrections.get(lvl, None)
-                if sf is None:
-                    raise ValueError(f"Correction {lvl} not found in self.corrections")
+    def build(self, jets, lazy_cache, target_level=None):
+        if lazy_cache is None:
+            raise Exception(
+                "CorrectedJetsFactory requires an awkward-array cache to function correctly."
+            )
+        mapping_proxy = getattr(awkward._util, "MappingProxy", None)
+        if mapping_proxy is not None:
+            lazy_cache = mapping_proxy.maybe_wrap(lazy_cache)
+        if not isinstance(jets, awkward.highlevel.Array):
+            raise Exception("'jets' must be an awkward > 1.0.0 array of some kind!")
 
-                ## This automatically apply the previous levels of correction, when needed
-                inputs = get_corr_inputs(
-                    jets=jets,
-                    corr_obj=sf,
-                    name_map=jec_name_map,
-                    cache=lazy_cache,
-                    corrections=cumCorr,
-                )
-                correction = sf.evaluate(*inputs).astype(dtype=numpy.float32)
-                corrections_list.append(correction)
-                if total_correction is None:
-                    total_correction = numpy.ones_like(correction, dtype=numpy.float32)
-                total_correction *= correction
+        out, wrap, scalar_form, in_dict, out_dict = self._prepare_jets(jets)
 
-                if self.jec_stack.savecorr:
-                    jec_lvl_tag = "_jec_" + lvl
+        jec_name_map = dict(self.name_map)
+        jec_name_map["JetPt"] = jec_name_map["ptRaw"]
+        jec_name_map["JetMass"] = jec_name_map["massRaw"]
 
-                    out_dict[f"jet_energy_correction_{lvl}"] = correction
-                    init_pt_lvl = partial(
-                        awkward.virtual,
-                        operator.mul,
-                        args=(
-                            out_dict[f"jet_energy_correction_{lvl}"],
-                            out_dict[self.name_map["ptRaw"]],
-                        ),
-                        cache=lazy_cache,
-                    )
-                    init_mass_lvl = partial(
-                        awkward.virtual,
-                        operator.mul,
-                        args=(
-                            out_dict[f"jet_energy_correction_{lvl}"],
-                            out_dict[self.name_map["massRaw"]],
-                        ),
-                        cache=lazy_cache,
-                    )
-                    out_dict[self.name_map["JetPt"] + f"_{lvl}"] = init_pt_lvl(
-                        length=len(out), form=scalar_form
-                    )
-                    out_dict[self.name_map["JetMass"] + f"_{lvl}"] = init_mass_lvl(
-                        length=len(out), form=scalar_form
-                    )
-
-                    out_dict[self.name_map["JetPt"] + jec_lvl_tag] = out_dict[
-                        self.name_map["JetPt"] + f"_{lvl}"
-                    ]
-                    out_dict[self.name_map["JetMass"] + jec_lvl_tag] = out_dict[
-                        self.name_map["JetMass"] + f"_{lvl}"
-                    ]
-
+        total_correction = self._evaluate_total_correction(
+            jets, out_dict, jec_name_map, lazy_cache, scalar_form, target_level
+        )
         out_dict["jet_energy_correction"] = total_correction
 
         # Finally, the lazy binding to the JEC
