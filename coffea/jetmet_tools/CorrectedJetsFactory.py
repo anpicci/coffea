@@ -229,6 +229,27 @@ class CorrectedJetsFactory(object):
             )
             self.forceStochastic = True
 
+    def uncertainties(self):
+        """Return the available JES uncertainty branch names.
+
+        The list mirrors the public ``CorrectedJetsFactory`` contract used by
+        analyses: names are ordered exactly as provided in the underlying JEC
+        configuration and prefixed with ``"JES_"`` to match the fields added
+        during :meth:`build`.
+        """
+
+        sources = []
+        if self.tool == "clib":
+            sources = [
+                name.split("_")[-2] for name in self.jec_stack.jec_uncsources_clib
+            ]
+        else:
+            junc = getattr(self.jec_stack, "junc", None)
+            if junc is not None:
+                sources = list(junc.levels)
+
+        return [f"JES_{source}" for source in sources]
+
     def load_corrections_clib(self):
         """Load the corrections from correctionlib using the json_path in JECStack."""
         self.corrections = self.jec_stack.corrections
