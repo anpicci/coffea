@@ -65,7 +65,11 @@ class JECStack:
         """Handle initialization based on use_clib flag."""
         self._cache_key: Optional[str] = self.cache_identifier
         if self.use_clib:
-            if self.json_path is None:
+            if (
+                self.json_path is None
+                and self.resolver is None
+                and self.correction_set is None
+            ):
                 inferred = self._infer_json_path()
                 if inferred is not None:
                     self.json_path = inferred

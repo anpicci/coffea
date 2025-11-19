@@ -984,6 +984,32 @@ def test_correctionlib_json_auto_selection(tmp_path, jet_algo):
     assert f"{jec_tag}_L1_{jet_algo}" in jet_factory.corrections
 
 
+def test_correctionlib_resolver_skips_auto_inference(tmp_path):
+    from coffea.jetmet_tools import JECStack
+
+    json_repo = tmp_path / "json_repo"
+    year = "2018"
+    jec_tag = "AutoResolver"
+    jet_algo = "AK4PFchs"
+
+    _write_minimal_jec_json(json_repo / year, jec_tag, jet_algo)
+    resolver_path = _write_minimal_jec_json(tmp_path / "resolver_repo", jec_tag, jet_algo)
+
+    stack = JECStack(
+        use_clib=True,
+        jec_tag=jec_tag,
+        jec_levels=["L1"],
+        jet_algo=jet_algo,
+        year=year,
+        json_search_dirs=[json_repo],
+        resolver=lambda _: str(resolver_path),
+    )
+
+    assert stack.cset[f"{jec_tag}_L1_{jet_algo}"]
+    assert stack.resolved_json_path == str(resolver_path.resolve())
+    assert stack.json_path is None
+
+
 def test_correctionlib_local_resolver(tmp_path):
     import correctionlib.schemav2 as cs
     from coffea.jetmet_tools import JECStack
