@@ -259,7 +259,9 @@ class CorrectedJetsFactory(object):
             raise Exception(
                 "CorrectedJetsFactory requires an awkward-array cache to function correctly."
             )
-        lazy_cache = awkward._util.MappingProxy.maybe_wrap(lazy_cache)
+        mapping_proxy = getattr(awkward._util, "MappingProxy", None)
+        if mapping_proxy is not None:
+            lazy_cache = mapping_proxy.maybe_wrap(lazy_cache)
         if not isinstance(jets, awkward.highlevel.Array):
             raise Exception("'jets' must be an awkward > 1.0.0 array of some kind!")
 
@@ -270,7 +272,16 @@ class CorrectedJetsFactory(object):
                 "Empty record, please pass a jet object with at least {self.real_sig} defined!"
             )
 
-        out = awkward.flatten(jets)
+        try:
+            out = awkward.flatten(jets)
+        except ValueError:
+            flattened_fields = {field: awkward.flatten(jets[field]) for field in fields}
+            out = awkward.zip(
+                flattened_fields,
+                depth_limit=1,
+                behavior=getattr(jets, "behavior", None),
+                parameters=getattr(getattr(jets, "layout", None), "parameters", None),
+            )
         wrap = partial(awkward_rewrap, like_what=jets, gfunc=rewrap_recordarray)
         scalar_form = awkward.without_parameters(
             out[self.name_map["ptRaw"]]
