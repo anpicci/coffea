@@ -120,6 +120,26 @@ or pass the already-loaded correction set directly:
 The resolved path and correction set are then consumed automatically by
 ``CorrectedJetsFactory`` during evaluation.
 
+When running in environments where the official ``JME-JSONs`` repository is
+available (for example via CVMFS) you can ask ``JECStack`` to auto-discover the
+correctionlib payload by providing the ``year`` and a list of search directories
+or by setting the ``COFFEA_JME_JSONS`` environment variable:
+
+.. code-block:: python
+
+    stack = JECStack(
+        use_clib=True,
+        jec_tag="Summer22Run3_V1_MC",
+        jec_levels=["L1", "L2L3"],
+        jet_algo="AK8PFPuppi",
+        year=2022,
+        json_search_dirs=["/cvmfs/cms.cern.ch/rsync/cms-jet/JME-JSONs"],
+    )
+
+The stack sets ``json_path`` automatically based on ``{jec_tag}_{jet_algo}``
+within the provided directory (preferring year-specific subdirectories), so
+downstream factories do not need to construct algorithm-specific file names.
+
 Documentation
 =============
 All documentation is hosted at https://coffea-hep.readthedocs.io/en/backports-v0.7.x/

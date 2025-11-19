@@ -6,6 +6,7 @@ from coffea.util import numpy as np
 
 import time
 import pyinstrument
+import pytest
 from typing import Any, Dict
 
 from dummy_distributions import dummy_jagged_eta_pt
@@ -904,6 +905,83 @@ def test_correctionlib_name_map_autowiring(tmp_path):
 
     assert ak.allclose(corrected_jets.JES_AbsoluteStat.up.pt, jets.pt * 1.1)
     assert ak.allclose(corrected_jets.JES_AbsoluteStat.down.pt, jets.pt * 0.9)
+
+
+def _write_minimal_jec_json(base_dir, jec_tag, jet_algo):
+    import correctionlib.schemav2 as cs
+
+    jec_inputs = [
+        cs.Variable(name="JetPt", type="real"),
+        cs.Variable(name="JetEta", type="real"),
+        cs.Variable(name="JetA", type="real"),
+        cs.Variable(name="Rho", type="real"),
+    ]
+
+    formula = cs.Formula(
+        nodetype="formula",
+        expression="1",
+        parser="TFormula",
+        variables=[var.name for var in jec_inputs],
+    )
+
+    correction = cs.Correction(
+        name=f"{jec_tag}_L1_{jet_algo}",
+        description="",
+        version=1,
+        inputs=jec_inputs,
+        output=cs.Variable(name="weight", type="real"),
+        data=formula,
+    )
+
+    target = base_dir / f"{jec_tag}_{jet_algo}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        cs.CorrectionSet(schema_version=2, corrections=[correction]).json(
+            exclude_none=True
+        )
+    )
+    return target
+
+
+@pytest.mark.parametrize("jet_algo", ["AK4PFchs", "AK8PFPuppi"])
+def test_correctionlib_json_auto_selection(tmp_path, jet_algo):
+    from coffea.jetmet_tools import CorrectedJetsFactory, JECStack
+
+    json_repo = tmp_path / "json_repo"
+    year = "2018"
+    jec_tag = "Auto"
+    target_dir = json_repo / year
+
+    # Write JSONs for both AK4 and AK8 so the resolver has to pick the right one
+    _write_minimal_jec_json(target_dir, jec_tag, "AK4PFchs")
+    _write_minimal_jec_json(target_dir, jec_tag, "AK8PFPuppi")
+
+    jec_stack = JECStack(
+        use_clib=True,
+        jec_tag=jec_tag,
+        jec_levels=["L1"],
+        jet_algo=jet_algo,
+        year=year,
+        json_search_dirs=[json_repo],
+    )
+
+    expected_path = target_dir / f"{jec_tag}_{jet_algo}.json"
+    assert jec_stack.json_path == expected_path.as_posix()
+    assert jec_stack.resolved_json_path == str(expected_path.resolve())
+
+    name_map = {
+        "JetPt": "pt",
+        "JetMass": "mass",
+        "JetEta": "eta",
+        "JetPhi": "phi",
+        "JetA": "area",
+        "Rho": "rho",
+        "ptRaw": "pt_raw",
+        "massRaw": "mass_raw",
+    }
+
+    jet_factory = CorrectedJetsFactory(name_map, jec_stack)
+    assert f"{jec_tag}_L1_{jet_algo}" in jet_factory.corrections
 
 
 def test_correctionlib_local_resolver(tmp_path):
