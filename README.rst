@@ -83,6 +83,21 @@ The following are installed automatically when you install coffea with pip:
 - `matplotlib <https://matplotlib.org/>`__ as a plotting backend;
 - and other utility packages, as enumerated in ``setup.py``.
 
+Running the test suite
+======================
+
+The pytest suite ships with the minimal ROOT and parquet fixtures required to
+exercise coffea's features, so it does not need network access or
+experiment-specific packages.  After installing the development dependencies
+simply run:
+
+.. code-block:: bash
+
+    pytest tests
+
+The tests detect accidental imports of disallowed optional packages and fail
+fast so that a clean environment continues to work out of the box.
+
 .. inclusion-marker-3-do-not-remove
 
 Configuring correctionlib-based JEC inputs
