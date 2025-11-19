@@ -1,4 +1,6 @@
+import os
 from dataclasses import dataclass, field
+from os import PathLike
 from typing import Callable, Dict, List, Optional, Union
 from coffea.jetmet_tools.FactorizedJetCorrector import FactorizedJetCorrector, _levelre
 from coffea.jetmet_tools.JetResolution import JetResolution
@@ -29,12 +31,15 @@ class JECStack:
     jer_tag: Optional[str] = None
     jet_algo: Optional[str] = None
     junc_types: Optional[List[str]] = field(default_factory=list)
-    json_path: Optional[str] = None
+    json_path: Optional[Union[str, PathLike]] = None
     correction_set: Optional[clib.schemav2.CorrectionSet] = None
     resolver: Optional[
         Union[
             str,
-            Callable[["JECStack"], Union[str, clib.schemav2.CorrectionSet]],
+            Callable[
+                ["JECStack"],
+                Union[str, PathLike, clib.schemav2.CorrectionSet],
+            ],
         ]
     ] = None
     resolved_json_path: Optional[str] = None
@@ -156,8 +161,9 @@ class JECStack:
         if isinstance(source, clib.schemav2.CorrectionSet):
             return source, None
 
-        if isinstance(source, str):
-            return clib.CorrectionSet.from_file(source), source
+        if isinstance(source, (str, PathLike)):
+            resolved_path = os.fspath(source)
+            return clib.CorrectionSet.from_file(resolved_path), resolved_path
 
         raise ValueError(
             "A json_path, correction_set, or resolver is required for clib initialization."
