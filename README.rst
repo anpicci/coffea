@@ -85,6 +85,41 @@ The following are installed automatically when you install coffea with pip:
 
 .. inclusion-marker-3-do-not-remove
 
+Configuring correctionlib-based JEC inputs
+=========================================
+
+``coffea.jetmet_tools.JECStack`` can be pointed at any correctionlib JSON or
+an in-memory :class:`correctionlib.schemav2.CorrectionSet` without relying on
+CVMFS defaults.  When running in environments without CVMFS, provide a
+``resolver`` callable or string template that returns the path to your JSON,
+or pass the already-loaded correction set directly:
+
+.. code-block:: python
+
+    from coffea.jetmet_tools import JECStack
+    import correctionlib.schemav2 as cs
+
+    # Use a path template
+    stack = JECStack(
+        use_clib=True,
+        jec_tag="Summer22_V1",
+        jec_levels=["L1", "L2L3"],
+        jet_algo="AK4PFchs",
+        resolver="/site/local/corrections/{jec_tag}_{jet_algo}.json",
+    )
+
+    # Or provide a fully-materialized correction set
+    stack = JECStack(
+        use_clib=True,
+        jec_tag="Local",
+        jec_levels=["L1"],
+        jet_algo="AK4PF",
+        correction_set=cs.CorrectionSet.from_file("./local.json"),
+    )
+
+The resolved path and correction set are then consumed automatically by
+``CorrectedJetsFactory`` during evaluation.
+
 Documentation
 =============
 All documentation is hosted at https://coffea-hep.readthedocs.io/en/backports-v0.7.x/

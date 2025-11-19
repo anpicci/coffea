@@ -903,3 +903,55 @@ def test_correctionlib_name_map_autowiring(tmp_path):
 
     assert ak.allclose(corrected_jets.JES_AbsoluteStat.up.pt, jets.pt * 1.1)
     assert ak.allclose(corrected_jets.JES_AbsoluteStat.down.pt, jets.pt * 0.9)
+
+
+def test_correctionlib_local_resolver(tmp_path):
+    import correctionlib.schemav2 as cs
+    from coffea.jetmet_tools import JECStack
+
+    jec_inputs = [
+        cs.Variable(name="JetPt", type="real"),
+        cs.Variable(name="JetEta", type="real"),
+    ]
+
+    local_cset = cs.CorrectionSet(
+        schema_version=2,
+        corrections=[
+            cs.Correction(
+                name="Local_L1_AK4PF",
+                description="",
+                version=1,
+                inputs=jec_inputs,
+                output=cs.Variable(name="weight", type="real"),
+                data=cs.Formula(
+                    nodetype="Formula",
+                    expression="1 + 0*JetPt + 0*JetEta",
+                    parser="TFormula",
+                    variables=["JetPt", "JetEta"],
+                ),
+            )
+        ],
+    )
+
+    json_path = tmp_path / "local_jec.json"
+    json_path.write_text(local_cset.json(exclude_none=True))
+
+    stack_from_resolver = JECStack(
+        use_clib=True,
+        jec_tag="Local",
+        jec_levels=["L1"],
+        jet_algo="AK4PF",
+        resolver=lambda _: str(json_path),
+    )
+    assert stack_from_resolver.cset["Local_L1_AK4PF"]
+    assert stack_from_resolver.resolved_json_path == str(json_path)
+
+    stack_from_cset = JECStack(
+        use_clib=True,
+        jec_tag="Local",
+        jec_levels=["L1"],
+        jet_algo="AK4PF",
+        correction_set=local_cset,
+    )
+    assert stack_from_cset.cset["Local_L1_AK4PF"]
+    assert stack_from_cset.resolved_json_path is None
