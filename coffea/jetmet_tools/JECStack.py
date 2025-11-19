@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import Callable, Dict, List, Optional, Union
 from coffea.jetmet_tools.FactorizedJetCorrector import FactorizedJetCorrector, _levelre
 from coffea.jetmet_tools.JetResolution import JetResolution
 from coffea.jetmet_tools.JetResolutionScaleFactor import JetResolutionScaleFactor
@@ -9,7 +9,15 @@ import correctionlib as clib
 
 @dataclass
 class JECStack:
-    """Handles both JEC and clib cases with conditional attributes."""
+    """Handles both JEC and clib cases with conditional attributes.
+
+    The clib pathway can be configured either with a concrete ``json_path``, a
+    fully materialized :class:`correctionlib.schemav2.CorrectionSet`, or a
+    resolver that returns one of those.  Resolvers may be callables or string
+    templates (``"/path/{jec_tag}_{jet_algo}.json"``) evaluated against the
+    dataclass fields.  This makes it easy to point to local or site-specific
+    locations instead of relying on CVMFS defaults.
+    """
 
     # Common fields for both scenarios
     corrections: Dict[str, any] = field(default_factory=dict)
@@ -22,6 +30,14 @@ class JECStack:
     jet_algo: Optional[str] = None
     junc_types: Optional[List[str]] = field(default_factory=list)
     json_path: Optional[str] = None
+    correction_set: Optional[clib.schemav2.CorrectionSet] = None
+    resolver: Optional[
+        Union[
+            str,
+            Callable[["JECStack"], Union[str, clib.schemav2.CorrectionSet]],
+        ]
+    ] = None
+    resolved_json_path: Optional[str] = None
     savecorr: bool = False
 
     # Fields for the usejecstack scenario (useclib=False)
@@ -39,11 +55,7 @@ class JECStack:
 
     def _initialize_clib(self):
         """Initialize the clib-based correction tools."""
-        if not self.json_path:
-            raise ValueError("json_path is required for clib initialization.")
-
-        # Load corrections directly from the JSON path
-        self.cset = clib.CorrectionSet.from_file(self.json_path)
+        self.cset, self.resolved_json_path = self._resolve_cset()
 
         # Construct lists for jec, jer, and uncertainties
         self.jec_names_clib = [
@@ -114,7 +126,41 @@ class JECStack:
             self.jec_names_clib
             + self.jer_names_clib
             + self.jec_uncsources_clib
-            + [self.json_path, self.savecorr]
+            + [self.resolved_json_path or self.json_path, self.savecorr]
+        )
+
+    def _resolve_cset(self):
+        """Resolve the correction set or path for clib initialization."""
+
+        if self.correction_set is not None:
+            return self.correction_set, None
+
+        source = None
+        if self.json_path is not None:
+            source = self.json_path
+        elif self.resolver is not None:
+            if callable(self.resolver):
+                source = self.resolver(self)
+            elif isinstance(self.resolver, str):
+                format_map = {
+                    "jec_tag": self.jec_tag,
+                    "jer_tag": self.jer_tag,
+                    "jet_algo": self.jet_algo,
+                }
+                source = self.resolver.format(**{k: v for k, v in format_map.items() if v is not None})
+            else:
+                raise TypeError(
+                    "resolver must be a callable or a string path template"
+                )
+
+        if isinstance(source, clib.schemav2.CorrectionSet):
+            return source, None
+
+        if isinstance(source, str):
+            return clib.CorrectionSet.from_file(source), source
+
+        raise ValueError(
+            "A json_path, correction_set, or resolver is required for clib initialization."
         )
 
     def assemble_corrections(self):
