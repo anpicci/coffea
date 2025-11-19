@@ -907,6 +907,109 @@ def test_correctionlib_name_map_autowiring(tmp_path):
     assert ak.allclose(corrected_jets.JES_AbsoluteStat.down.pt, jets.pt * 0.9)
 
 
+def test_correctionlib_step_selection_api(tmp_path):
+    import correctionlib.schemav2 as cs
+    from coffea.jetmet_tools import CorrectedJetsFactory, JECStack
+
+    jec_inputs = [cs.Variable(name="JetPt", type="real")]
+
+    corrections = [
+        cs.Correction(
+            name="StepSelect_L1_AK4PF",
+            description="",
+            version=1,
+            inputs=jec_inputs,
+            output=cs.Variable(name="weight", type="real"),
+            data=cs.Binning(
+                nodetype="binning",
+                input="JetPt",
+                edges=[0.0, 1e6],
+                flow="clamp",
+                content=[1.1],
+            ),
+        ),
+        cs.Correction(
+            name="StepSelect_L2_AK4PF",
+            description="",
+            version=1,
+            inputs=jec_inputs,
+            output=cs.Variable(name="weight", type="real"),
+            data=cs.Binning(
+                nodetype="binning",
+                input="JetPt",
+                edges=[0.0, 1e6],
+                flow="clamp",
+                content=[1.2],
+            ),
+        ),
+    ]
+
+    json_path = tmp_path / "step_select.json"
+    json_path.write_text(
+        cs.CorrectionSet(schema_version=2, corrections=corrections).json(
+            exclude_none=True
+        )
+    )
+
+    jec_stack = JECStack(
+        use_clib=True,
+        jec_tag="StepSelect",
+        jec_levels=["L1", "L2"],
+        jet_algo="AK4PF",
+        json_path=str(json_path),
+    )
+
+    name_map = {
+        "JetPt": "pt",
+        "JetMass": "mass",
+        "JetEta": "eta",
+        "JetPhi": "phi",
+        "JetA": "area",
+        "Rho": "rho",
+        "ptRaw": "pt_raw",
+        "massRaw": "mass_raw",
+    }
+
+    jet_factory = CorrectedJetsFactory(name_map, jec_stack)
+
+    jets = ak.Array(
+        {
+            "pt": [[100.0, 80.0]],
+            "mass": [[10.0, 8.0]],
+            "pt_raw": [[95.0, 76.0]],
+            "mass_raw": [[9.5, 7.5]],
+            "eta": [[0.1, -0.2]],
+            "phi": [[0.5, -1.0]],
+            "area": [[0.5, 0.5]],
+            "rho": [[20.0, 20.0]],
+        }
+    )
+
+    jec_cache = cachetools.Cache(np.inf)
+
+    corrected_jets = jet_factory.build(jets, lazy_cache=jec_cache)
+    jet_fields = set(ak.fields(corrected_jets))
+    assert all(
+        not field.startswith("jet_energy_correction_StepSelect") for field in jet_fields
+    )
+
+    level_one = jet_factory.correction_factors(
+        jets, lazy_cache=jec_cache, target_level="L1"
+    )
+    assert ak.allclose(level_one, ak.full_like(jets.pt, 1.1))
+
+    full_levels = jet_factory.correction_factors(
+        jets, lazy_cache=jec_cache, target_level="L2"
+    )
+    assert ak.allclose(full_levels, ak.full_like(jets.pt, 1.1 * 1.2))
+
+    partial_jets = jet_factory.build(jets, lazy_cache=jec_cache, target_level="L1")
+    assert ak.allclose(partial_jets.pt, jets.pt_raw * 1.1)
+
+    with pytest.raises(ValueError):
+        jet_factory.correction_factors(jets, lazy_cache=jec_cache, target_level="L3")
+
+
 def _write_minimal_jec_json(base_dir, jec_tag, jet_algo):
     import correctionlib.schemav2 as cs
 

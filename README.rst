@@ -140,6 +140,38 @@ The stack sets ``json_path`` automatically based on ``{jec_tag}_{jet_algo}``
 within the provided directory (preferring year-specific subdirectories), so
 downstream factories do not need to construct algorithm-specific file names.
 
+Requesting specific correction levels
+=====================================
+
+``CorrectedJetsFactory`` now exposes lightweight accessors for multiplying the
+corrections up to a named level without materializing a column per step.  The
+``correction_factors`` method returns an awkward array matching the jet
+structure and accepts ``target_level`` strings that align with the
+``jec_levels`` provided to ``JECStack`` (``"L1"``, ``"L2Relative"``, etc.) or
+the fully qualified correction names:
+
+.. code-block:: python
+
+    jet_factory = CorrectedJetsFactory(name_map, jec_stack)
+    jec_cache = cachetools.Cache(np.inf)
+
+    # Retrieve the correction factors up to the L1 step
+    l1_factors = jet_factory.correction_factors(
+        jets,
+        lazy_cache=jec_cache,
+        target_level="L1",
+    )
+
+    # Build jets using only corrections up to L2
+    partially_corrected = jet_factory.build(
+        jets,
+        lazy_cache=jec_cache,
+        target_level="L2",
+    )
+
+If ``target_level`` is omitted the factory multiplies all available JEC levels
+as before.
+
 Documentation
 =============
 All documentation is hosted at https://coffea-hep.readthedocs.io/en/backports-v0.7.x/
