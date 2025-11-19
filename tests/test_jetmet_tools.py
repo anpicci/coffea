@@ -6,6 +6,7 @@ from coffea.util import numpy as np
 
 import time
 import pyinstrument
+from typing import Any, Dict
 
 from dummy_distributions import dummy_jagged_eta_pt
 
@@ -955,3 +956,82 @@ def test_correctionlib_local_resolver(tmp_path):
     )
     assert stack_from_cset.cset["Local_L1_AK4PF"]
     assert stack_from_cset.resolved_json_path is None
+
+
+def test_correctionlib_cache_reuses_files(tmp_path, monkeypatch):
+    import correctionlib as clib
+    import correctionlib.schemav2 as cs
+    from coffea.jetmet_tools import CorrectedJetsFactory, JECStack
+
+    jec_inputs = [
+        cs.Variable(name="JetPt", type="real"),
+        cs.Variable(name="JetEta", type="real"),
+        cs.Variable(name="JetA", type="real"),
+        cs.Variable(name="Rho", type="real"),
+    ]
+    formula = cs.Formula(
+        nodetype="formula",
+        expression="1",
+        parser="TFormula",
+        variables=[var.name for var in jec_inputs],
+    )
+    corrections = [
+        cs.Correction(
+            name="Test_L1_AK4PF",
+            description="",
+            version=1,
+            inputs=jec_inputs,
+            output=cs.Variable(name="weight", type="real"),
+            data=formula,
+        ),
+        cs.Correction(
+            name="Test_L2_AK4PF",
+            description="",
+            version=1,
+            inputs=jec_inputs,
+            output=cs.Variable(name="weight", type="real"),
+            data=formula,
+        ),
+    ]
+
+    json_path = tmp_path / "cache_test.json"
+    json_path.write_text(
+        cs.CorrectionSet(schema_version=2, corrections=corrections).json(
+            exclude_none=True
+        )
+    )
+
+    load_counter = {"count": 0}
+    original_from_file = clib.CorrectionSet.from_file
+
+    def counting_from_file(cls, path):
+        load_counter["count"] += 1
+        return original_from_file(path)
+
+    monkeypatch.setattr(
+        clib.CorrectionSet, "from_file", classmethod(counting_from_file)
+    )
+
+    shared_cache: Dict[str, Dict[str, Any]] = {}
+
+    stack_kwargs = dict(
+        use_clib=True,
+        jec_tag="Test",
+        jec_levels=["L1", "L2"],
+        jet_algo="AK4PF",
+        json_path=str(json_path),
+        cache=shared_cache,
+    )
+
+    stack_one = JECStack(**stack_kwargs)
+    stack_two = JECStack(**stack_kwargs)
+
+    name_map = {"JetPt": "pt", "JetMass": "mass"}
+    CorrectedJetsFactory(name_map, stack_one)
+    CorrectedJetsFactory(name_map, stack_two)
+
+    assert load_counter["count"] == 1
+    assert (
+        stack_one.corrections["Test_L1_AK4PF"]
+        is stack_two.corrections["Test_L1_AK4PF"]
+    )
