@@ -32,13 +32,13 @@ class JECStack:
     jet_algo: Optional[str] = None
     junc_types: Optional[List[str]] = field(default_factory=list)
     json_path: Optional[Union[str, PathLike]] = None
-    correction_set: Optional[clib.schemav2.CorrectionSet] = None
+    correction_set: Optional[Union[clib.CorrectionSet, clib.schemav2.CorrectionSet]] = None
     resolver: Optional[
         Union[
             str,
             Callable[
                 ["JECStack"],
-                Union[str, PathLike, clib.schemav2.CorrectionSet],
+                Union[str, PathLike, clib.CorrectionSet, clib.schemav2.CorrectionSet],
             ],
         ]
     ] = None
@@ -158,7 +158,7 @@ class JECStack:
                     "resolver must be a callable or a string path template"
                 )
 
-        if isinstance(source, clib.schemav2.CorrectionSet):
+        if isinstance(source, (clib.CorrectionSet, clib.schemav2.CorrectionSet)):
             return source, None
 
         if isinstance(source, (str, PathLike)):
