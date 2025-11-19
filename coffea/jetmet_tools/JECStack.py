@@ -138,7 +138,7 @@ class JECStack:
         """Resolve the correction set or path for clib initialization."""
 
         if self.correction_set is not None:
-            return self.correction_set, None
+            return self._ensure_highlevel_cset(self.correction_set), None
 
         source = None
         if self.json_path is not None:
@@ -159,7 +159,7 @@ class JECStack:
                 )
 
         if isinstance(source, (clib.CorrectionSet, clib.schemav2.CorrectionSet)):
-            return source, None
+            return self._ensure_highlevel_cset(source), None
 
         if isinstance(source, (str, PathLike)):
             resolved_path = os.fspath(source)
@@ -168,6 +168,19 @@ class JECStack:
         raise ValueError(
             "A json_path, correction_set, or resolver is required for clib initialization."
         )
+
+    def _ensure_highlevel_cset(
+        self, cset: Union[clib.CorrectionSet, clib.schemav2.CorrectionSet]
+    ) -> clib.CorrectionSet:
+        """Convert schema objects into high-level correction sets."""
+
+        if isinstance(cset, clib.CorrectionSet):
+            return cset
+
+        if isinstance(cset, clib.schemav2.CorrectionSet):
+            return clib.CorrectionSet.from_string(cset.json())
+
+        raise TypeError("Unsupported correction set type for conversion")
 
     def assemble_corrections(self):
         """Assemble corrections for both scenarios."""
