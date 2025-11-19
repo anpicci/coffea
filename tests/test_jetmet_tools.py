@@ -43,6 +43,24 @@ def jetmet_evaluator():
 evaluator = jetmet_evaluator()
 
 
+def _minimal_name_map():
+    return {
+        "JetPt": "pt",
+        "JetMass": "mass",
+        "JetEta": "eta",
+        "JetPhi": "phi",
+        "JetA": "area",
+        "ptRaw": "pt_raw",
+        "massRaw": "mass_raw",
+        "ptGenJet": "pt_gen",
+        "Rho": "rho",
+        "METpt": "met_pt",
+        "METphi": "met_phi",
+        "UnClusteredEnergyDeltaX": "dpx",
+        "UnClusteredEnergyDeltaY": "dpy",
+    }
+
+
 def test_factorized_jet_corrector():
     from coffea.jetmet_tools import FactorizedJetCorrector
 
@@ -807,6 +825,87 @@ def test_factory_lifecycle():
     print("Diff:", diff)
     assert len(diff) == 0
     assert jec_finalized.is_set()
+
+
+def test_corrected_jets_uncertainty_names_legacy():
+    from coffea.jetmet_tools import CorrectedJetsFactory, CorrectedMETFactory, JECStack
+
+    junc_name = "Summer16_23Sep2016V3_MC_UncertaintySources_AK4PFPuppi_AbsoluteStat"
+    jec_stack = JECStack({junc_name: evaluator[junc_name]})
+
+    jet_factory = CorrectedJetsFactory(_minimal_name_map(), jec_stack)
+    met_factory = CorrectedMETFactory(_minimal_name_map())
+
+    expected = ["JES_AbsoluteStat"]
+    assert jet_factory.uncertainties() == expected
+    assert jet_factory.uncertainties() + met_factory.uncertainties() == (
+        expected + ["MET_UnclusteredEnergy"]
+    )
+
+
+def test_corrected_jets_uncertainty_names_correctionlib(tmp_path):
+    import correctionlib.schemav2 as cs
+    from coffea.jetmet_tools import CorrectedJetsFactory, CorrectedMETFactory, JECStack
+
+    jec_inputs = [cs.Variable(name="JetPt", type="real")]
+
+    base_binning = cs.Binning(
+        nodetype="binning",
+        input="JetPt",
+        edges=[0.0, 1e6],
+        flow="clamp",
+        content=[1.0],
+    )
+
+    corrections = [
+        cs.Correction(
+            name="Test_L1_AK4PF",
+            description="",
+            version=1,
+            inputs=jec_inputs,
+            output=cs.Variable(name="weight", type="real"),
+            data=base_binning,
+        ),
+        cs.Correction(
+            name="Test_AbsoluteStat_AK4PF",
+            description="",
+            version=1,
+            inputs=[cs.Variable(name="JetPt", type="real")],
+            output=cs.Variable(name="weight", type="real"),
+            data=cs.Binning(
+                nodetype="binning",
+                input="JetPt",
+                edges=[0.0, 1e6],
+                flow="clamp",
+                content=[0.1],
+            ),
+        ),
+    ]
+
+    json_path = tmp_path / "test_uncertainty.json"
+    json_path.write_text(
+        cs.CorrectionSet(schema_version=2, corrections=corrections).json(
+            exclude_none=True
+        )
+    )
+
+    jec_stack = JECStack(
+        use_clib=True,
+        jec_tag="Test",
+        jec_levels=["L1"],
+        jet_algo="AK4PF",
+        junc_types=["AbsoluteStat"],
+        json_path=str(json_path),
+    )
+
+    jet_factory = CorrectedJetsFactory(_minimal_name_map(), jec_stack)
+    met_factory = CorrectedMETFactory(_minimal_name_map())
+
+    expected = ["JES_AbsoluteStat"]
+    assert jet_factory.uncertainties() == expected
+    assert jet_factory.uncertainties() + met_factory.uncertainties() == (
+        expected + ["MET_UnclusteredEnergy"]
+    )
 
 
 def test_correctionlib_name_map_autowiring(tmp_path):
